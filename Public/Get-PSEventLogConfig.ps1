@@ -1,142 +1,149 @@
 function Get-PSEventLogConfig {
 <#
 .SYNOPSIS
-    Audits the configuration of PowerShell-related Windows event logs.
+    Audits the configuration of security-relevant Windows event logs.
 
 .DESCRIPTION
-    Enabling Script Block Logging or Module Logging is only half the battle.
-    If the event log that receives those events is too small, disabled, or set
-    to overwrite aggressively, critical forensic data will be lost before
-    anyone can investigate.
+    Enabling PowerShell, AppLocker, Defender, or Security auditing is only useful
+    if the event logs that receive those events are enabled and large enough to
+    retain useful local evidence.
 
-    This function checks four security-relevant event logs and evaluates two
-    things for each:
-      1. Is the log enabled?
-      2. Is the configured maximum size adequate?
+    This function checks whether important Windows event logs exist, whether they
+    are enabled, and whether their configured maximum size meets the
+    SecurityPosturePS module baseline.
+
+    IMPORTANT
+    SecurityPosturePS does not claim that these size baselines are mandated by
+    CISA, CIS, NIST, Microsoft, or NSA. Log sizing is environment-dependent.
+    Size logs based on event volume, forwarding frequency, retention needs, and
+    incident response requirements.
+
+    The reference used here is NIST SP 800-92, Guide to Computer Security Log
+    Management. It provides general guidance for building and maintaining log
+    management practices, but it does not prescribe a single Windows event log
+    size.
 
     LOGS CHECKED
-      Microsoft-Windows-PowerShell/Operational
-        The primary PowerShell security log. Receives Script Block Logging
-        (Event 4104), Module Logging (Event 4103), and script block lifecycle
-        events (4105/4106). Default max size is only 15 MB -- far too small
-        for any environment under active use.
+      Security
+        Windows Security audit log. Contains high-value audit events such as
+        logons, account changes, privilege use, policy changes, process creation
+        when enabled, and Event ID 1102 when the Security audit log is cleared.
 
-      Windows PowerShell (classic)
-        The legacy PowerShell event log. Still receives engine lifecycle events
-        and command history on Windows PowerShell 5.1.
+      System
+        Windows system log. Includes Event ID 104 when a Windows event log is
+        cleared.
+
+      Application
+        Windows application log. Useful for application and service-level events.
+
+      Microsoft-Windows-PowerShell/Operational
+        Primary Windows PowerShell operational log. Receives Script Block Logging
+        4104, Module Logging 4103, and invocation events 4105/4106 when enabled.
+
+      PowerShellCore/Operational
+        PowerShell 7+ operational log for pwsh sessions.
+
+      Windows PowerShell
+        Classic PowerShell event log for Windows PowerShell 5.1 engine events.
 
       Microsoft-Windows-AppLocker/MSI and Script
-        AppLocker script enforcement events (allowed, audited, blocked).
-        Only populated when AppLocker script rules are configured.
+        AppLocker script policy events.
 
       Microsoft-Windows-Windows Defender/Operational
-        Windows Defender threat detection, remediation, and scan events.
-
-    SIZE THRESHOLDS
-    This function flags logs under 50 MB as 'Too Small'. This is a conservative
-    minimum. The NSA and CISA recommend 1 GB or more for high-value security
-    logs, and Microsoft's own guidance for PowerShell/Operational on servers
-    suggests at least 100 MB. The 15 MB default should always be increased.
+        Microsoft Defender threat detection, remediation, and scan events.
 
     HOW TO CONFIGURE LOG SIZES IN PRODUCTION
-    Use Group Policy:
+    Prefer Group Policy, Intune, MDM, or your configuration management platform.
 
+    Group Policy path:
         Computer Configuration
          > Administrative Templates
          > Windows Components
          > Event Log Service
          > <Log Name>
-         > Maximum Log Size (KB)  ->  set to at least 102400 (100 MB)
+         > Maximum Log Size (KB)
 
-    Or via wevtutil on a single machine (for testing only -- not for production):
-        wevtutil sl Microsoft-Windows-PowerShell/Operational /ms:104857600
-
-    This function is read-only and shows you the current registry-backed
-    configuration. It is a learning and auditing tool, not a remediation tool.
-
-    WHAT "GOOD" LOOKS LIKE
-    Status = 'OK'  for all four logs
+    For lab testing on one machine, you can use wevtutil:
+        wevtutil sl Microsoft-Windows-PowerShell/Operational /ms:268435456
 
 .EXAMPLE
-    PS> Get-PSEventLogConfig
-
-    Returns the configuration status of all four monitored event logs.
+    Get-PSEventLogConfig
 
 .EXAMPLE
-    PS> Get-PSEventLogConfig | Where-Object Status -ne 'OK' |
-            Select-Object LogName, Status, MaxSizeMB, Notes
-
-    Shows only misconfigured logs with the reason and Notes explanation.
+    Get-PSEventLogConfig | Format-Table LogName, Status, MaxSizeMB, RecommendedMinimumSizeMB -AutoSize
 
 .EXAMPLE
-    PS> Get-PSEventLogConfig | Format-Table LogName, IsEnabled, MaxSizeMB, RecordCount, Status -AutoSize
-
-    Compact table view of all log configuration properties.
+    Get-PSEventLogConfig | Where-Object Status -ne 'OK'
 
 .OUTPUTS
-    [PSCustomObject] One object per monitored log with properties:
-        ComputerName  - Machine audited
-        CheckName     - 'Event Log Config: <LogName>'
-        LogName       - Full Windows event log name
-        IsEnabled     - Boolean: whether the log is currently enabled
-        MaxSizeMB     - Configured maximum log size in megabytes
-        RecordCount   - Current number of events in the log
-        LogMode       - Circular | AutoBackup | Retain
-        RegistryPath  - Registry key path that backs this log's config
-        Status        - OK | Too Small | Disabled | Not Found
-        Notes         - Plain-English explanation of the finding
-        Reference     - Official documentation URL
+    [PSCustomObject]
 
-.NOTES
-    Module      : SecurityPosturePS v0.1.0
-    Size floor  : 50 MB flagged as 'Too Small' -- CISA recommends >= 1 GB
-    Registry    : HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WINEVT\Channels\<encoded-name>
-                  Classic logs: HKLM:\SYSTEM\CurrentControlSet\Services\EventLog\<name>
+.LINK
+    https://csrc.nist.gov/pubs/sp/800/92/final
 
 .LINK
     https://learn.microsoft.com/en-us/windows/win32/wes/eventmanifestschema-channeltype-complextype
 
 .LINK
     https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_logging_windows
-
-.LINK
-    https://www.cisa.gov/resources-tools/resources/logging-made-easy
 #>
     [CmdletBinding()]
     [OutputType([PSCustomObject])]
     param()
 
     begin {
-        $computerName    = $env:COMPUTERNAME
-        $minSizeBytes    = 50MB   # Conservative floor; flag anything below this.
-        $winevtRegBase   = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WINEVT\Channels'
-        $classicLogBase  = 'HKLM:\SYSTEM\CurrentControlSet\Services\EventLog'
+        $computerName = $env:COMPUTERNAME
+        $winevtRegBase = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WINEVT\Channels'
+        $classicLogBase = 'HKLM:\SYSTEM\CurrentControlSet\Services\EventLog'
+        $nistReference = 'https://csrc.nist.gov/pubs/sp/800/92/final'
 
-        # Each entry: LogName, a short Purpose label, and its Reference URL.
         $targets = @(
             [PSCustomObject]@{
-                LogName   = 'Microsoft-Windows-PowerShell/Operational'
-                Purpose   = 'Primary PowerShell security log; receives Script Block (4104), Module Logging (4103), and invocation (4105/4106) events'
+                LogName = 'Security'
+                Purpose = 'Windows Security audit log. Contains high-value audit events such as logons, account changes, privilege use, policy changes, and Event ID 1102 when the Security audit log is cleared.'
+                RecommendedMinimumSizeMB = 1024
+                Reference = $nistReference
+            }
+            [PSCustomObject]@{
+                LogName = 'System'
+                Purpose = 'Windows system log. Includes Event ID 104 when a Windows event log is cleared.'
+                RecommendedMinimumSizeMB = 256
+                Reference = $nistReference
+            }
+            [PSCustomObject]@{
+                LogName = 'Application'
+                Purpose = 'Windows application log. Useful for application and service-level events that can support troubleshooting and incident response.'
+                RecommendedMinimumSizeMB = 256
+                Reference = $nistReference
+            }
+            [PSCustomObject]@{
+                LogName = 'Microsoft-Windows-PowerShell/Operational'
+                Purpose = 'Primary Windows PowerShell operational log. Receives Script Block Logging 4104, Module Logging 4103, and invocation events 4105/4106 when enabled.'
+                RecommendedMinimumSizeMB = 256
                 Reference = 'https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_logging_windows'
             }
             [PSCustomObject]@{
-                LogName   = 'PowerShellCore/Operational'
-                Purpose   = 'PowerShell 7+ security log; receives script block and related engine events for pwsh sessions'
+                LogName = 'PowerShellCore/Operational'
+                Purpose = 'PowerShell 7+ operational log for pwsh sessions.'
+                RecommendedMinimumSizeMB = 256
                 Reference = 'https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_logging_windows'
             }
             [PSCustomObject]@{
-                LogName   = 'Windows PowerShell'
-                Purpose   = 'Classic PowerShell log; receives engine lifecycle and legacy command history events'
+                LogName = 'Windows PowerShell'
+                Purpose = 'Classic PowerShell log for Windows PowerShell 5.1 engine and lifecycle events.'
+                RecommendedMinimumSizeMB = 256
                 Reference = 'https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_logging_windows'
             }
             [PSCustomObject]@{
-                LogName   = 'Microsoft-Windows-AppLocker/MSI and Script'
-                Purpose   = 'AppLocker script policy events: 8005 = allowed, 8006 = audit (would-have-blocked), 8007 = blocked'
+                LogName = 'Microsoft-Windows-AppLocker/MSI and Script'
+                Purpose = 'AppLocker script policy events such as allowed, audited, and blocked script execution.'
+                RecommendedMinimumSizeMB = 256
                 Reference = 'https://learn.microsoft.com/en-us/windows/security/application-security/application-control/windows-defender-application-control/applocker/applocker-overview'
             }
             [PSCustomObject]@{
-                LogName   = 'Microsoft-Windows-Windows Defender/Operational'
-                Purpose   = 'Windows Defender threat detection, remediation, and scan result events'
+                LogName = 'Microsoft-Windows-Windows Defender/Operational'
+                Purpose = 'Microsoft Defender threat detection, remediation, and scan result events.'
+                RecommendedMinimumSizeMB = 256
                 Reference = 'https://learn.microsoft.com/en-us/microsoft-365/security/defender-endpoint/troubleshoot-microsoft-defender-antivirus'
             }
         )
@@ -144,75 +151,77 @@ function Get-PSEventLogConfig {
 
     process {
         foreach ($target in $targets) {
-
             Write-Verbose "[$computerName] Checking event log config: $($target.LogName)"
 
-            # Get-WinEvent -ListLog returns the live config including IsEnabled,
-            # MaximumSizeInBytes, RecordCount, and LogMode.
             $logInfo = Get-WinEvent -ListLog $target.LogName -ErrorAction SilentlyContinue
+            $encodedName = $target.LogName -replace '/', '%4'
+
+            if ($target.LogName -notmatch '/') {
+                $regPath = "$classicLogBase\$($target.LogName)"
+            }
+            else {
+                $regPath = "$winevtRegBase\$encodedName"
+            }
 
             if (-not $logInfo) {
-                # Build the registry path even for not-found logs so the output
-                # is still useful (shows what path to investigate).
-                $encodedName = $target.LogName -replace '/', '%4'
-                $regPath     = if ($target.LogName -notmatch '/') {
-                    "$classicLogBase\$($target.LogName)"
-                } else {
-                    "$winevtRegBase\$encodedName"
-                }
-
                 [PSCustomObject]@{
                     ComputerName = $computerName
-                    CheckName    = "Event Log Config: $($target.LogName)"
-                    LogName      = $target.LogName
-                    IsEnabled    = $null
-                    MaxSizeMB    = $null
-                    RecordCount  = $null
-                    LogMode      = $null
+                    CheckName = "Event Log Config: $($target.LogName)"
+                    LogName = $target.LogName
+                    IsEnabled = $null
+                    MaxSizeMB = $null
+                    RecommendedMinimumSizeMB = $target.RecommendedMinimumSizeMB
+                    RecordCount = $null
+                    LogMode = $null
                     RegistryPath = $regPath
-                    Status       = 'Not Found'
-                    Notes        = "Log not found on this machine. $($target.Purpose)"
-                    Reference    = $target.Reference
+                    Status = 'Not Found'
+                    Notes = "Log not found on this machine. $($target.Purpose)"
+                    Reference = $target.Reference
                 }
+
                 continue
             }
 
-            $maxSizeMB  = [Math]::Round($logInfo.MaximumSizeInBytes / 1MB, 1)
-            $encodedName = $target.LogName -replace '/', '%4'
-            $regPath     = if ($target.LogName -notmatch '/') {
-                "$classicLogBase\$($target.LogName)"
-            } else {
-                "$winevtRegBase\$encodedName"
+            $maxSizeMB = [Math]::Round($logInfo.MaximumSizeInBytes / 1MB, 1)
+            $recommendedMinimumSizeMB = $target.RecommendedMinimumSizeMB
+
+            if (-not $logInfo.IsEnabled) {
+                $status = 'Disabled'
+            }
+            elseif ($maxSizeMB -lt $recommendedMinimumSizeMB) {
+                $status = 'Too Small'
+            }
+            else {
+                $status = 'OK'
             }
 
-            $status = if (-not $logInfo.IsEnabled) {
-                'Disabled'
-            } elseif ($logInfo.MaximumSizeInBytes -lt $minSizeBytes) {
-                'Too Small'
-            } else {
-                'OK'
+            switch ($status) {
+                'Disabled' {
+                    $notes = "Log is disabled. No events will be written to this log. $($target.Purpose)"
+                }
+                'Too Small' {
+                    $notes = "Maximum size is $maxSizeMB MB, which is below the SecurityPosturePS baseline of $recommendedMinimumSizeMB MB. This is not a CISA-mandated value. Log size should be tuned for event volume, forwarding frequency, retention needs, and incident response requirements. $($target.Purpose)"
+                }
+                default {
+                    $notes = "Maximum size is $maxSizeMB MB, which meets the SecurityPosturePS baseline of $recommendedMinimumSizeMB MB. $($target.Purpose)"
+                }
             }
 
-            $notes = switch ($status) {
-                'Disabled'  { "Log is disabled; no events will be written. $($target.Purpose)" }
-                'Too Small' { "Max size is $maxSizeMB MB (below 50 MB threshold); events will be overwritten too quickly for forensic retention. CISA recommends >= 1 GB. $($target.Purpose)" }
-                'OK'        { "$($target.Purpose)" }
-            }
-
-            Write-Verbose "[$computerName] $($target.LogName) => $status (MaxSize: ${maxSizeMB} MB, Records: $($logInfo.RecordCount))"
+            Write-Verbose "[$computerName] $($target.LogName) => $status (MaxSize: $maxSizeMB MB, Recommended: $recommendedMinimumSizeMB MB, Records: $($logInfo.RecordCount))"
 
             [PSCustomObject]@{
                 ComputerName = $computerName
-                CheckName    = "Event Log Config: $($target.LogName)"
-                LogName      = $target.LogName
-                IsEnabled    = $logInfo.IsEnabled
-                MaxSizeMB    = $maxSizeMB
-                RecordCount  = $logInfo.RecordCount
-                LogMode      = $logInfo.LogMode.ToString()
+                CheckName = "Event Log Config: $($target.LogName)"
+                LogName = $target.LogName
+                IsEnabled = $logInfo.IsEnabled
+                MaxSizeMB = $maxSizeMB
+                RecommendedMinimumSizeMB = $recommendedMinimumSizeMB
+                RecordCount = $logInfo.RecordCount
+                LogMode = $logInfo.LogMode.ToString()
                 RegistryPath = $regPath
-                Status       = $status
-                Notes        = $notes
-                Reference    = $target.Reference
+                Status = $status
+                Notes = $notes
+                Reference = $target.Reference
             }
         }
     }
