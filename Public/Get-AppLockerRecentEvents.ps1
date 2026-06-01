@@ -149,9 +149,15 @@ function Get-AppLockerRecentEvents {
                 EventId        = $evt.Id
                 Level          = $evt.LevelDisplayName
                 LogName        = $evt.LogName
-                PolicyDecision = $decisionMap[$evt.Id] ?? "Unknown (ID $($evt.Id))"
+                PolicyDecision = if ($decisionMap.ContainsKey($evt.Id)) {
+                    $decisionMap[$evt.Id]
+                }
+                else {
+                    "Unknown (ID $($evt.Id))"
+                }
                 Message        = $evt.Message
             }
         }
     }
 }
+
