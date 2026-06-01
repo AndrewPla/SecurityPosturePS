@@ -12,8 +12,8 @@ function Get-PSRecentEvents {
     POWERSHELL EVENT IDS QUERIED BY DEFAULT
       4103  Module Logging -- pipeline execution details for a module command
       4104  Script Block Logging -- script block content
-      4105  Transcription started -- script block invocation started
-      4106  Transcription stopped -- script block invocation stopped
+      4105  script block started -- script block invocation started
+      4106  script block stopped -- script block invocation stopped
 
     Event 4104 is the most security-relevant: it contains the full decoded
     script text, including any code that was obfuscated at the network or disk

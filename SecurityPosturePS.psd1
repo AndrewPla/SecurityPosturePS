@@ -32,10 +32,12 @@
 
         # Event log configuration
         'Get-PSEventLogConfig'
+        
 
         # Event log query tools
         'Get-PSRecentEvents'
         'Get-AppLockerRecentEvents'
+        'Get-EventLogClearEvent'
 
         # Inventory
         'Get-PSVersionInfo'

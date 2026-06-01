@@ -17,7 +17,7 @@ function Get-PSEventLogConfig {
     LOGS CHECKED
       Microsoft-Windows-PowerShell/Operational
         The primary PowerShell security log. Receives Script Block Logging
-        (Event 4104), Module Logging (Event 4103), and Transcription lifecycle
+        (Event 4104), Module Logging (Event 4103), and script block lifecycle
         events (4105/4106). Default max size is only 15 MB -- far too small
         for any environment under active use.
 
@@ -116,7 +116,7 @@ function Get-PSEventLogConfig {
         $targets = @(
             [PSCustomObject]@{
                 LogName   = 'Microsoft-Windows-PowerShell/Operational'
-                Purpose   = 'Primary PowerShell security log; receives Script Block (4104), Module Logging (4103), and Transcription (4105/4106) events'
+                Purpose   = 'Primary PowerShell security log; receives Script Block (4104), Module Logging (4103), and invocation (4105/4106) events'
                 Reference = 'https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_logging_windows'
             }
             [PSCustomObject]@{
